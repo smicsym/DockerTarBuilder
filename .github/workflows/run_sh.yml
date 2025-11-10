@@ -1,0 +1,58 @@
+name: Run Script and Upload Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      script_url:
+        description: "URL of the shell script to run"
+        required: true
+        type: string
+      env_vars:
+        description: "Comma-separated environment variables (e.g. FOO=bar,BAR=baz)"
+        required: false
+        default: ""
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download script
+        run: |
+          curl -fsSL "${{ github.event.inputs.script_url }}" -o script.sh
+          chmod +x script.sh
+
+      - name: Set environment variables
+        run: |
+          if [ -n "${{ github.event.inputs.env_vars }}" ]; then
+            IFS=',' read -ra VARS <<< "${{ github.event.inputs.env_vars }}"
+            for kv in "${VARS[@]}"; do
+              echo "Setting $kv"
+              echo "$kv" >> $GITHUB_ENV
+            done
+          fi
+
+      - name: Run script
+        run: |
+          mkdir output
+          ./script.sh
+          cp -r * output/ || true
+
+      - name: Package artifacts
+        run: |
+          tar -czvf artifacts.tar.gz -C output .
+
+      - name: Upload Docker images as release assets
+        uses: softprops/action-gh-release@v2.1.0
+        with:
+          tag_name: shresults
+          files: ${{ github.workspace }}/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
