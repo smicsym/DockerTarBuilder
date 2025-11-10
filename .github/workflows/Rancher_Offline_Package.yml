@@ -22,8 +22,8 @@ jobs:
 
       - name: Pull Rancher image
         run: |
-          docker pull rancher/rancher:2.12.3
-          docker save rancher/rancher:2.12.3 -o rancher-2.12.3.tar
+          docker pull rancher/rancher:latest
+          docker save rancher/rancher:latest -o rancher-latest.tar
 
       - name: Download Rancher Helm Chart
         run: |
@@ -38,8 +38,8 @@ jobs:
       - name: Package resources
         run: |
           mkdir output
-          mv rancher-2.12.3.tar output/
-          mv rancher-2.12.3.tgz output/
+          mv rancher-latest.tar output/
+          mv rancher-latest.tgz output/
           mv cert-manager-v1.19.1.tgz output/
           tar -czvf rancher-offline-resources.tar.gz -C output .
 
