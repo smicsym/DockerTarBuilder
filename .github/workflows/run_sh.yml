@@ -41,7 +41,7 @@ jobs:
       - name: Run script
         run: |
           mkdir output
-          ./script.sh
+          sudo sh script.sh
           cp -r * output/ || true
 
       - name: Package artifacts
