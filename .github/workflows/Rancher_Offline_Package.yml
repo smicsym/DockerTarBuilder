@@ -39,7 +39,7 @@ jobs:
         run: |
           mkdir output
           mv rancher-latest.tar output/
-          mv rancher-latest.tgz output/
+          mv rancher-2.12.3.tgz output/
           mv cert-manager-v1.19.1.tgz output/
           tar -czvf rancher-offline-resources.tar.gz -C output .
 
