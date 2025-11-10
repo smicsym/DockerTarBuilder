@@ -1,0 +1,51 @@
+name: Rancher Offline Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        run: |
+          curl -fsSL https://get.helm.sh/helm-v3.14.0-linux-amd64.tar.gz -o helm.tar.gz
+          tar -zxvf helm.tar.gz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+
+      - name: Pull Rancher image
+        run: |
+          docker pull rancher/rancher:2.9.2
+          docker save rancher/rancher:2.9.2 -o rancher-2.9.2.tar
+
+      - name: Download Rancher Helm Chart
+        run: |
+          helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
+          helm fetch rancher-stable/rancher --version 2.9.2
+
+      - name: Download Cert-Manager Helm Chart
+        run: |
+          helm repo add jetstack https://charts.jetstack.io
+          helm fetch jetstack/cert-manager --version v1.14.4
+
+      - name: Package resources
+        run: |
+          mkdir output
+          mv rancher-2.9.2.tar output/
+          mv rancher-2.9.2.tgz output/
+          mv cert-manager-v1.14.4.tgz output/
+          tar -czvf rancher-offline-resources.tar.gz -C output .
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: rancher-offline-resources.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
