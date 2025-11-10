@@ -22,25 +22,25 @@ jobs:
 
       - name: Pull Rancher image
         run: |
-          docker pull rancher/rancher:2.9.2
-          docker save rancher/rancher:2.9.2 -o rancher-2.9.2.tar
+          docker pull rancher/rancher:2.12.3
+          docker save rancher/rancher:2.12.3 -o rancher-2.12.3.tar
 
       - name: Download Rancher Helm Chart
         run: |
           helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
-          helm fetch rancher-stable/rancher --version 2.9.2
+          helm fetch rancher-stable/rancher --version 2.12.3
 
       - name: Download Cert-Manager Helm Chart
         run: |
           helm repo add jetstack https://charts.jetstack.io
-          helm fetch jetstack/cert-manager --version v1.14.4
+          helm fetch jetstack/cert-manager --version v1.19.1
 
       - name: Package resources
         run: |
           mkdir output
-          mv rancher-2.9.2.tar output/
-          mv rancher-2.9.2.tgz output/
-          mv cert-manager-v1.14.4.tgz output/
+          mv rancher-2.12.3.tar output/
+          mv rancher-2.12.3.tgz output/
+          mv cert-manager-v1.19.1.tgz output/
           tar -czvf rancher-offline-resources.tar.gz -C output .
 
       - name: Upload Release Asset
