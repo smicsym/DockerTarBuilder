@@ -1,0 +1,38 @@
+name: Download Baidu Netdisk Folder
+
+on:
+  workflow_dispatch:
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Install BaiduPCS-Go
+        run: |
+          wget https://github.com/qjfoidnh/BaiduPCS-Go/releases/latest/download/BaiduPCS-Go-linux-amd64.zip
+          unzip BaiduPCS-Go-linux-amd64.zip
+          sudo mv BaiduPCS-Go /usr/local/bin/baidupcs
+
+      - name: Login to Baidu Netdisk
+        run: |
+          baidupcs login --bduss="${{ secrets.BDUSS }}" --stoken="${{ secrets.STOKEN }}"
+
+      - name: List folder content
+        run: |
+          echo "Listing folder: ${{ secrets.BAIDU_FOLDER }}"
+          baidupcs ls "${{ secrets.BAIDU_FOLDER }}"
+
+      - name: Download folder
+        run: |
+          mkdir -p downloaded
+          baidupcs download "${{ secrets.BAIDU_FOLDER }}" --saveto=downloaded --recursive
+
+      - name: Upload downloaded files as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: baidu-folder
+          path: downloaded
