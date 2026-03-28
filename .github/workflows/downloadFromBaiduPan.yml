@@ -33,12 +33,17 @@ jobs:
           wget "$DOWNLOAD_URL" -O BaiduPCS-Go.zip
           unzip BaiduPCS-Go.zip
 
-          # 找到解压后的二进制文件
-          BIN=$(find . -maxdepth 1 -type f -name "BaiduPCS-Go*" | head -n 1)
+          # 进入解压后的目录（自动识别）
+          DIR=$(find . -maxdepth 1 -type d -name "BaiduPCS-Go-v*" | head -n 1)
+          echo "Extracted directory: $DIR"
+
+          # 找到真正的二进制文件
+          BIN="$DIR/BaiduPCS-Go"
           echo "Binary: $BIN"
 
           sudo mv "$BIN" /usr/local/bin/baidupcs
           sudo chmod +x /usr/local/bin/baidupcs
+
 
 
       - name: Login to Baidu Netdisk
