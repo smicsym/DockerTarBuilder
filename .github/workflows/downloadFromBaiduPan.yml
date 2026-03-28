@@ -16,17 +16,30 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Install BaiduPCS-Go (auto-detect latest version)
+      - name: Install BaiduPCS-Go (auto-detect latest linux-amd64)
         run: |
-          LATEST=$(curl -s https://api.github.com/repos/qjfoidnh/BaiduPCS-Go/releases/latest | grep tag_name | cut -d '"' -f 4)
-          echo "Latest version: $LATEST"
+          # 获取最新 release JSON
+          RELEASE_JSON=$(curl -s https://api.github.com/repos/qjfoidnh/BaiduPCS-Go/releases/latest)
 
-          URL="https://github.com/qjfoidnh/BaiduPCS-Go/releases/download/${LATEST}/BaiduPCS-Go-linux-amd64.zip"
-          echo "Downloading: $URL"
+          # 从 assets 中筛选 linux-amd64 的下载链接
+          DOWNLOAD_URL=$(echo "$RELEASE_JSON" | \
+            grep -E '"browser_download_url":' | \
+            grep 'linux-amd64' | \
+            cut -d '"' -f 4)
 
-          wget "$URL" -O BaiduPCS-Go.zip
+          echo "Download URL: $DOWNLOAD_URL"
+
+          # 下载
+          wget "$DOWNLOAD_URL" -O BaiduPCS-Go.zip
           unzip BaiduPCS-Go.zip
-          sudo mv BaiduPCS-Go /usr/local/bin/baidupcs
+
+          # 找到解压后的二进制文件
+          BIN=$(find . -maxdepth 1 -type f -name "BaiduPCS-Go*" | head -n 1)
+          echo "Binary: $BIN"
+
+          sudo mv "$BIN" /usr/local/bin/baidupcs
+          sudo chmod +x /usr/local/bin/baidupcs
+
 
       - name: Login to Baidu Netdisk
         run: |
