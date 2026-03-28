@@ -64,7 +64,7 @@ jobs:
         run: |
           mkdir -p downloaded
           echo "⬇️ 正在下载：${{ github.event.inputs.folder }}"
-          baidupcs download "${{ github.event.inputs.folder }}" --saveto=downloaded --recursive
+          baidupcs download "${{ github.event.inputs.folder }}" --saveto=downloaded --pack
 
       - name: Upload downloaded files as artifact
         uses: actions/upload-artifact@v4
