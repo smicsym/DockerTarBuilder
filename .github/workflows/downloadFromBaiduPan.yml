@@ -16,10 +16,16 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Install BaiduPCS-Go
+      - name: Install BaiduPCS-Go (auto-detect latest version)
         run: |
-          wget https://github.com/qjfoidnh/BaiduPCS-Go/releases/latest/download/BaiduPCS-Go-linux-amd64.zip
-          unzip BaiduPCS-Go-linux-amd64.zip
+          LATEST=$(curl -s https://api.github.com/repos/qjfoidnh/BaiduPCS-Go/releases/latest | grep tag_name | cut -d '"' -f 4)
+          echo "Latest version: $LATEST"
+
+          URL="https://github.com/qjfoidnh/BaiduPCS-Go/releases/download/${LATEST}/BaiduPCS-Go-linux-amd64.zip"
+          echo "Downloading: $URL"
+
+          wget "$URL" -O BaiduPCS-Go.zip
+          unzip BaiduPCS-Go.zip
           sudo mv BaiduPCS-Go /usr/local/bin/baidupcs
 
       - name: Login to Baidu Netdisk
