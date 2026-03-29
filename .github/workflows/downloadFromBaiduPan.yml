@@ -64,10 +64,15 @@ jobs:
         run: |
           mkdir -p downloaded
           echo "⬇️ 正在下载：${{ github.event.inputs.folder }}"
-          baidupcs download "${{ github.event.inputs.folder }}" --saveto=downloaded --pack
+          baidupcs download "${{ github.event.inputs.folder }}" --saveto=downloaded -p 10 -l 10
 
-      - name: Upload downloaded files as artifact
+      - name: Zip downloaded folder
+        run: |
+          cd downloaded
+          zip -r folder.zip .
+
+      - name: Upload ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: baidu-folder
-          path: downloaded
+          name: baidu-folder-zip
+          path: downloaded/folder.zip
