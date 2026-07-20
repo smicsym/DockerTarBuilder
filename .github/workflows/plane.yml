@@ -2,9 +2,6 @@ name: Build Plane Offline Package
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
 
 jobs:
   build-offline-package:
@@ -30,10 +27,10 @@ jobs:
 
       - name: Pull Plane CE images (GHCR)
         run: |
-          docker pull ghcr.io/makeplane/plane-ce-frontend:1.6.0
-          docker pull ghcr.io/makeplane/plane-ce-backend:1.6.0
-          docker pull ghcr.io/makeplane/plane-ce-worker:1.6.0
-          docker pull ghcr.io/makeplane/plane-ce-beat:1.6.0
+          docker pull ghcr.io/makeplane/plane-frontend:v1.3.1
+          docker pull ghcr.io/makeplane/plane-backend:v1.3.1
+          docker pull ghcr.io/makeplane/plane-worker:v1.3.1
+          docker pull ghcr.io/makeplane/plane-beat:v1.3.1
           docker pull minio/minio:latest
           docker pull postgres:15
           docker pull redis:7
@@ -41,10 +38,10 @@ jobs:
       - name: Save images to tar
         run: |
           docker save \
-            ghcr.io/makeplane/plane-ce-frontend:1.6.0 \
-            ghcr.io/makeplane/plane-ce-backend:1.6.0 \
-            ghcr.io/makeplane/plane-ce-worker:1.6.0 \
-            ghcr.io/makeplane/plane-ce-beat:1.6.0 \
+            ghcr.io/makeplane/plane-frontend:v1.3.1 \
+            ghcr.io/makeplane/plane-backend:v1.3.1 \
+            ghcr.io/makeplane/plane-worker:v1.3.1 \
+            ghcr.io/makeplane/plane-beat:v1.3.1 \
             minio/minio:latest \
             postgres:15 \
             redis:7 \
