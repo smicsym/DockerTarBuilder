@@ -66,13 +66,8 @@ jobs:
       - name: Set up Docker
         uses: docker/setup-buildx-action@v3
 
-      - name: Install tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y helm skopeo jq
-          
-          # 安装 helm-push 插件用于打包 chart
-          helm plugin install https://github.com/chartmuseum/helm-push.git || true
+      - name: Install Helm
+        uses: azure/setup-helm@v3
 
       # ============================================
       # 2. 下载 Helm Chart
