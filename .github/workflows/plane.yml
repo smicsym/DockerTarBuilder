@@ -207,6 +207,12 @@ jobs:
           # 打包镜像 (分卷压缩，每个不超过 2GB)
           cd ./images
           tar -czf ../release/plane-images.tar.gz --exclude='*.txt' *.tar
+          # 分卷压缩（每卷 2GB）
+          cd ../release
+          split -b 2000m plane-images.tar plane-images.tar.part-
+          
+          # 删除未分卷的大文件
+          rm plane-images.tar
           cp image-list.txt ../release/
           cp manifest.txt ../release/
           cd ..
