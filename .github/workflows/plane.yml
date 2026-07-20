@@ -21,7 +21,7 @@ jobs:
         run: |
           helm repo add plane https://helm.plane.so
           helm repo update
-          helm pull plane/plane --version 1.3.1 --untar
+          helm pull plane/plane --version 1.6.0 --untar
           tar czvf plane-chart.tar.gz plane/
 
       - name: Set up Docker Buildx
