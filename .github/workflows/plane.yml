@@ -27,12 +27,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Pull Plane images
+      - name: Pull Plane CE images
         run: |
-          docker pull plane/plane-frontend:latest
-          docker pull plane/plane-backend:latest
-          docker pull plane/plane-worker:latest
-          docker pull plane/plane-beat:latest
+          docker pull makeplane/plane-ce-frontend:1.6.0
+          docker pull makeplane/plane-ce-backend:1.6.0
+          docker pull makeplane/plane-ce-worker:1.6.0
+          docker pull makeplane/plane-ce-beat:1.6.0
           docker pull minio/minio:latest
           docker pull postgres:15
           docker pull redis:7
@@ -40,10 +40,10 @@ jobs:
       - name: Save images to tar
         run: |
           docker save \
-            plane/plane-frontend:latest \
-            plane/plane-backend:latest \
-            plane/plane-worker:latest \
-            plane/plane-beat:latest \
+            makeplane/plane-ce-frontend:1.6.0 \
+            makeplane/plane-ce-backend:1.6.0 \
+            makeplane/plane-ce-worker:1.6.0 \
+            makeplane/plane-ce-beat:1.6.0 \
             minio/minio:latest \
             postgres:15 \
             redis:7 \
