@@ -377,7 +377,7 @@ jobs:
       # 5. 创建 GitHub Release 并上传资源
       # ============================================
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2.1.0
         with:
           tag_name: plane-${{ env.PLANE_VERSION }}-${{ env.EDITION }}-${{ github.run_number }}
           name: "Plane ${{ env.PLANE_VERSION }} (${{ env.EDITION }}) - Air-gapped Package"
