@@ -1,424 +1,560 @@
-name: Download Plane Resources for Air-gapped Install
+name: Package Plane Enterprise Air-Gapped Assets
 
 on:
   workflow_dispatch:
     inputs:
       plane_version:
-        description: 'Plane version (e.g., v2.6.3)'
+        description: 'Plane Enterprise Version'
         required: true
-        default: 'v2.6.3'
-        type: string
-      edition:
-        description: 'Plane edition'
-        required: true
-        default: 'enterprise'
-        type: choice
-        options:
-          - enterprise
-          - community
-      enable_opensearch:
-        description: 'Include OpenSearch images'
-        required: false
-        default: false
-        type: boolean
-      enable_ai:
-        description: 'Include Plane AI images'
-        required: false
-        default: false
-        type: boolean
-      enable_email:
-        description: 'Include Email service images'
-        required: false
-        default: false
-        type: boolean
-      enable_iframely:
-        description: 'Include Iframely images'
-        required: false
-        default: false
-        type: boolean
-      enable_outbox:
-        description: 'Include Outbox Poller images'
-        required: false
-        default: false
-        type: boolean
-      enable_automation:
-        description: 'Include Automation Consumer images'
-        required: false
-        default: false
-        type: boolean
-
-env:
-  PLANE_VERSION: ${{ github.event.inputs.plane_version }}
-  EDITION: ${{ github.event.inputs.edition }}
+        default: 'v3.0.0'
 
 jobs:
-  download-and-release:
+  build-and-package:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+
     steps:
-      # ============================================
-      # 1. 环境准备
-      # ============================================
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
-
-      - name: Install Helm
-        uses: azure/setup-helm@v3
-
-      # ============================================
-      # 2. 下载 Helm Chart
-      # ============================================
-      - name: Download Helm Chart
-        run: |
-          mkdir -p ./charts
-          
-          if [ "${{ env.EDITION }}" = "enterprise" ]; then
-            helm repo add plane https://helm.plane.so/
-            helm repo update
-            helm pull plane/plane-enterprise --version ${{ env.PLANE_VERSION }} --destination ./charts/
-            CHART_FILE=$(ls ./charts/plane-enterprise-*.tgz)
-          else
-            helm repo add makeplane https://helm.plane.so/
-            helm repo update
-            helm pull makeplane/plane-ce --version ${{ env.PLANE_VERSION }} --destination ./charts/
-            CHART_FILE=$(ls ./charts/plane-ce-*.tgz)
-          fi
-          
-          echo "CHART_FILE=$CHART_FILE" >> $GITHUB_ENV
-          echo "Downloaded chart: $CHART_FILE"
-
-      # ============================================
-      # 3. 定义镜像列表并下载
-      # ============================================
-      - name: Define image list
-        run: |
-          mkdir -p ./images
-          
-          # 基础依赖镜像 (始终包含)
-          IMAGES=(
-            "postgres:15.7-alpine"
-            "valkey/valkey:7.2.11-alpine"
-            "rabbitmq:3.13.6-management-alpine"
-            "minio/minio:latest"
-            "minio/mc:latest"
-          )
-          
-          # Plane 核心应用镜像
-          if [ "${{ env.EDITION }}" = "enterprise" ]; then
-            IMAGES+=(
-              "makeplane/web-commercial:${{ env.PLANE_VERSION }}"
-              "makeplane/space-commercial:${{ env.PLANE_VERSION }}"
-              "makeplane/admin-commercial:${{ env.PLANE_VERSION }}"
-              "makeplane/backend-commercial:${{ env.PLANE_VERSION }}"
-              "makeplane/live-commercial:${{ env.PLANE_VERSION }}"
-              "makeplane/monitor-commercial:${{ env.PLANE_VERSION }}"
-              "makeplane/silo-commercial:${{ env.PLANE_VERSION }}"
-            )
-          else
-            IMAGES+=(
-              "makeplane/plane-frontend:${{ env.PLANE_VERSION }}"
-              "makeplane/plane-space:${{ env.PLANE_VERSION }}"
-              "makeplane/plane-admin:${{ env.PLANE_VERSION }}"
-              "makeplane/plane-backend:${{ env.PLANE_VERSION }}"
-              "makeplane/plane-live:${{ env.PLANE_VERSION }}"
-            )
-          fi
-          
-          # 可选: OpenSearch
-          if [ "${{ github.event.inputs.enable_opensearch }}" = "true" ]; then
-            IMAGES+=("opensearchproject/opensearch:3.3.2")
-          fi
-          
-          # 可选: Plane AI
-          if [ "${{ github.event.inputs.enable_ai }}" = "true" ]; then
-            IMAGES+=("makeplane/plane-pi-commercial:${{ env.PLANE_VERSION }}")
-          fi
-          
-          # 可选: Email Service
-          if [ "${{ github.event.inputs.enable_email }}" = "true" ]; then
-            IMAGES+=("makeplane/email-commercial:${{ env.PLANE_VERSION }}")
-          fi
-          
-          # 可选: Iframely
-          if [ "${{ github.event.inputs.enable_iframely }}" = "true" ]; then
-            IMAGES+=("makeplane/iframely:v1.2.0")
-          fi
-          
-          # 可选: Outbox Poller (使用 backend 镜像)
-          if [ "${{ github.event.inputs.enable_outbox }}" = "true" ]; then
-            IMAGES+=("makeplane/backend-commercial:${{ env.PLANE_VERSION }}")
-          fi
-          
-          # 可选: Automation Consumer (使用 backend 镜像)
-          if [ "${{ github.event.inputs.enable_automation }}" = "true" ]; then
-            IMAGES+=("makeplane/backend-commercial:${{ env.PLANE_VERSION }}")
-          fi
-          
-          # 去重
-          IMAGES=($(echo "${IMAGES[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
-          
-          echo "IMAGES=${IMAGES[*]}" >> $GITHUB_ENV
-          
-          # 保存镜像列表到文件
-          printf "%s\n" "${IMAGES[@]}" > ./images/image-list.txt
-          echo "Total images to download: ${#IMAGES[@]}"
-
-      - name: Pull and save Docker images
-        run: |
-          IMAGES="${{ env.IMAGES }}"
-          
-          for img in $IMAGES; do
-            echo "=========================================="
-            echo "Processing: $img"
-            echo "=========================================="
-            
-            # 提取镜像名称用于文件名
-            filename=$(echo "$img" | tr '/:' '_').tar
-            safe_name=$(echo "$img" | sed 's/[^a-zA-Z0-9._-]/_/g').tar
-            
-            # 使用 skopeo 直接复制为 OCI 格式 (更稳定)
-            skopeo copy "docker://$img" "docker-archive:./images/$safe_name" || {
-              echo "Skopeo failed for $img, trying docker pull..."
-              docker pull "$img"
-              docker save "$img" -o "./images/$safe_name"
-            }
-            
-            echo "Saved: $img -> ./images/$safe_name"
-          done
-          
-          # 生成镜像清单
-          ls -lh ./images/*.tar > ./images/manifest.txt
-
-      # ============================================
-      # 4. 打包所有资源
-      # ============================================
-      - name: Package resources
-        run: |
-          # 创建资源包
-          mkdir -p ./release
-          
-          # 打包 Chart
-          cp ${{ env.CHART_FILE }} ./release/
-          
-          # 打包镜像 (分卷压缩，每个不超过 2GB)
-          cd ./images
-          tar -cf ../release/plane-images.tar --exclude='*.txt' *.tar
-          # 分卷压缩（每卷 2GB）
-          cd ../release
-          split -b 2000m plane-images.tar plane-images.tar.part-
-          
-          # 删除未分卷的大文件
-          rm plane-images.tar
-          cd ../images
-          cp image-list.txt ../release/
-          cp manifest.txt ../release/
-          cd ..
-          
-          # 创建安装脚本
-          cat > ./release/load-images.sh << 'EOF'
-          #!/bin/bash
-          # Plane 内网镜像导入脚本
-          # 用法: ./load-images.sh <registry-url> [namespace]
-          
-          REGISTRY=${1:-"localhost:5000"}
-          NAMESPACE=${2:-"plane"}
-          
-          echo "=========================================="
-          echo "Loading Plane images to registry: $REGISTRY"
-          echo "=========================================="
-          
-          for tarfile in *.tar; do
-            [ -e "$tarfile" ] || continue
-            echo "Loading: $tarfile"
-            docker load -i "$tarfile"
-            
-            # 获取加载的镜像名
-            img=$(docker load -i "$tarfile" | grep "Loaded image" | sed 's/Loaded image: //')
-            
-            if [ -n "$img" ]; then
-              # 重新打标签并推送到私有仓库
-              new_img="$REGISTRY/$NAMESPACE/$(echo $img | cut -d'/' -f2-)"
-              docker tag "$img" "$new_img"
-              docker push "$new_img"
-              echo "Pushed: $new_img"
-            fi
-          done
-          
-          echo "All images loaded successfully!"
-          EOF
-          
-          chmod +x ./release/load-images.sh
-          
-          # 创建 values.yaml 模板
-          cat > ./release/values-template.yaml << 'EOF'
-          # Plane 内网部署 values.yaml 模板
-          # 请根据实际环境修改以下配置
-          
-          planeVersion: ${PLANE_VERSION}
-          
-          # 域名配置
-          license:
-            licenseDomain: plane.your-domain.com
-            licenseServer: https://prime.plane.so
-          
-          # 使用私有仓库
-          dockerRegistry:
-            enabled: true
-            registry: your-private-registry.com
-            loginid: your-username
-            password: your-password
-          
-          # 存储配置
-          env:
-            storageClass: longhorn  # 修改为你的 StorageClass
-          
-          # Ingress 配置
-          ingress:
-            enabled: true
-            ingressClass: nginx
-          
-          # 数据库配置 (内网建议使用本地部署)
-          services:
-            postgres:
-              local_setup: true
-              image: your-private-registry.com/plane/postgres:15.7-alpine
-              volumeSize: 5Gi
-          
-            redis:
-              local_setup: true
-              image: your-private-registry.com/plane/valkey:7.2.11-alpine
-              volumeSize: 1Gi
-          
-            rabbitmq:
-              local_setup: true
-              image: your-private-registry.com/plane/rabbitmq:3.13.6-management-alpine
-              volumeSize: 100Mi
-          
-            minio:
-              local_setup: true
-              image: your-private-registry.com/plane/minio:latest
-              image_mc: your-private-registry.com/plane/mc:latest
-              volumeSize: 5Gi
-          
-            opensearch:
-              local_setup: false  # 如需启用改为 true
-              # image: your-private-registry.com/plane/opensearch:3.3.2
-          
-          # 应用镜像 (指向私有仓库)
-            web:
-              image: your-private-registry.com/plane/web-commercial:${PLANE_VERSION}
-            space:
-              image: your-private-registry.com/plane/space-commercial:${PLANE_VERSION}
-            admin:
-              image: your-private-registry.com/plane/admin-commercial:${PLANE_VERSION}
-            api:
-              image: your-private-registry.com/plane/backend-commercial:${PLANE_VERSION}
-            live:
-              image: your-private-registry.com/plane/live-commercial:${PLANE_VERSION}
-            monitor:
-              image: your-private-registry.com/plane/monitor-commercial:${PLANE_VERSION}
-            silo:
-              image: your-private-registry.com/plane/silo-commercial:${PLANE_VERSION}
-          
-          # 如需启用 AI
-          # pi:
-          #   enabled: true
-          #   image: your-private-registry.com/plane/plane-pi-commercial:${PLANE_VERSION}
-          EOF
-          
-          # 创建安装指南
-          cat > ./release/INSTALL.md << EOF
-          # Plane 内网安装指南
-          
-          ## 版本信息
-          - Plane 版本: ${PLANE_VERSION}
-          - 版本类型: ${EDITION}
-          - 打包时间: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          
-          ## 资源清单
-          $(cat ./release/image-list.txt)
-          
-          ## 安装步骤
-          
-          ### 1. 导入镜像到私有仓库
-          \`\`\`bash
-          # 解压镜像包
-          tar -xzf plane-images.tar.gz
-          
-          # 编辑 load-images.sh 修改 REGISTRY 地址
-          # 然后执行
-          ./load-images.sh your-registry.com plane
-          \`\`\`
-          
-          ### 2. 配置 values.yaml
-          \`\`\`bash
-          cp values-template.yaml values.yaml
-          # 编辑 values.yaml，修改域名、仓库地址、密码等
-          \`\`\`
-          
-          ### 3. 安装 Plane
-          \`\`\`bash
-          # 添加本地 chart 仓库 (或直接使用 tgz 文件)
-          helm install plane-app ./plane-${EDITION}-*.tgz \\
-            --create-namespace \\
-            --namespace plane \\
-            -f values.yaml \\
-            --timeout 10m \\
-            --wait \\
-            --wait-for-jobs
-          \`\`\`
-          
-          ### 4. 验证
-          \`\`\`bash
-          kubectl get pods -n plane
-          \`\`\`
-          EOF
-          
-          ls -lh ./release/
-
-      # ============================================
-      # 5. 创建 GitHub Release 并上传资源
-      # ============================================
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2.1.0
+      - name: Setup Kubernetes Tools
+        uses: yokawasa/action-setup-kube-tools@v0.14.0
         with:
-          tag_name: plane-${{ env.PLANE_VERSION }}-${{ env.EDITION }}-${{ github.run_number }}
-          name: "Plane ${{ env.PLANE_VERSION }} (${{ env.EDITION }}) - Air-gapped Package"
-          body: |
-            ## Plane 内网安装资源包
+          setup-tools: |
+            helm
+            yq
+          helm: "latest"
+          yq: "latest"
+
+      # ========== 步骤 1：准备 Helm 仓库与依赖 ==========
+      - name: Setup Helm Repositories
+        run: |
+          helm repo add plane https://helm.plane.so/
+          helm repo add traefik https://traefik.github.io/charts
+          helm repo update
+
+      # ========== 步骤 2：完整打包 Helm Chart (含依赖与 Air-gapped 配置) ==========
+      - name: Package Full Helm Chart
+        run: |
+          PLANE_VERSION="${{ github.event.inputs.plane_version }}"
+          echo "正在下载 Plane EE Chart (版本: $PLANE_VERSION)..."
+          
+          # 下载源码并解压
+          helm pull plane/plane-enterprise --version "$PLANE_VERSION" --untar --untardir ./plane-chart-src
+          
+          CHART_DIR=$(find ./plane-chart-src -maxdepth 1 -type d | tail -n 1)
+          
+          echo "正在构建 Helm 子依赖包..."
+          helm dependency build "$CHART_DIR" || true
+
+          # 强制开启 airgapped.enabled 及基础离线配置
+          if [ -f "$CHART_DIR/values.yaml" ]; then
+            echo "正在开启 airgapped.enabled 配置..."
+            yq e '.airgapped.enabled = true' -i "$CHART_DIR/values.yaml"
+            yq e '.planeVersion = "'"$PLANE_VERSION"'"' -i "$CHART_DIR/values.yaml"
+            yq e '.ingress.enabled = true' -i "$CHART_DIR/values.yaml"
+            yq e '.ingress.ingressClass = "traefik"' -i "$CHART_DIR/values.yaml"
+          fi
+
+          echo "正在打包离线 Helm 包..."
+          OUTPUT_NAME="plane-enterprise-helm-full.tar.gz"
+          tar -czf "$OUTPUT_NAME" -C "$CHART_DIR" .
+
+          echo "Helm 离线包大小: $(du -sh "$OUTPUT_NAME" | cut -f1)"
+
+      - name: Upload Helm Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plane-enterprise-helm-full
+          path: plane-enterprise-helm-full.tar.gz
+          retention-days: 2
+
+      # ========== 步骤 3：提取所有离线镜像列表 (包含 Airgapped 特有镜像) ==========
+      - name: Extract All Required Images
+        id: list_images
+        run: |
+          PLANE_VERSION="${{ github.event.inputs.plane_version }}"
+          
+          # 渲染 Plane 主服务的模板，显式带上 airgapped.enabled=true 提取镜像
+          helm template plane-app plane/plane-enterprise \
+            --version "$PLANE_VERSION" \
+            --set airgapped.enabled=true \
+            --set ingress.enabled=true \
+            --set ingress.ingressClass=traefik | \
+            yq e '.. | select(has("image")) | .image | select(. != null)' - | \
+            sort -u > raw_images.txt
+
+          # 补充提取 Traefik Ingress Controller 镜像
+          helm template traefik traefik/traefik | \
+            yq e '.. | select(has("image")) | .image | select(. != null)' - | \
+            sort -u >> raw_images.txt
+
+          # 格式化与去重
+          sed -i '/---/d' raw_images.txt
+          sed -i '/^\s*$/d' raw_images.txt
+          sort -u raw_images.txt > images.txt
+
+          echo "========================================"
+          echo "           Plane 待拉取离线镜像列表"
+          echo "========================================"
+          cat images.txt
+          echo "========================================"
+          echo "共计 $(wc -l < images.txt) 个镜像"
+          echo "========================================"
+
+      # ========== 步骤 4：拉取并打包所有容器镜像 ==========
+      - name: Pull and Package All Images
+        run: |
+          mapfile -t IMAGES < images.txt
+          
+          if [ ${#IMAGES[@]} -eq 0 ]; then
+            echo "Error: 未在 Chart 模版中检测到任何镜像！"
+            exit 1
+          fi
+
+          echo "=========================================="
+          echo "正在拉取所有官方镜像 (共 ${#IMAGES[@]} 个)..."
+          echo "=========================================="
+          for img in "${IMAGES[@]}"; do
+            echo "正在下载镜像: $img ..."
+            docker pull "$img"
+          done
+          echo "所有镜像下载完毕。"
+
+          echo "=========================================="
+          echo "正在打包并压缩镜像文件..."
+          echo "=========================================="
+          OUTPUT_NAME="plane-enterprise-images.tar.gz"
+          
+          docker save "${IMAGES[@]}" | gzip > "$OUTPUT_NAME"
+
+          echo "打包完成！文件大小："
+          du -sh "$OUTPUT_NAME"
+
+      # ========== 步骤 5：上传镜像 Artifact ==========
+      - name: Upload Images Artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: plane-enterprise-offline-images
+          path: plane-enterprise-images.tar.gz
+          retention-days: 2
+# name: Download Plane Resources for Air-gapped Install
+
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       plane_version:
+#         description: 'Plane version (e.g., v2.6.3)'
+#         required: true
+#         default: 'v2.6.3'
+#         type: string
+#       edition:
+#         description: 'Plane edition'
+#         required: true
+#         default: 'enterprise'
+#         type: choice
+#         options:
+#           - enterprise
+#           - community
+#       enable_opensearch:
+#         description: 'Include OpenSearch images'
+#         required: false
+#         default: false
+#         type: boolean
+#       enable_ai:
+#         description: 'Include Plane AI images'
+#         required: false
+#         default: false
+#         type: boolean
+#       enable_email:
+#         description: 'Include Email service images'
+#         required: false
+#         default: false
+#         type: boolean
+#       enable_iframely:
+#         description: 'Include Iframely images'
+#         required: false
+#         default: false
+#         type: boolean
+#       enable_outbox:
+#         description: 'Include Outbox Poller images'
+#         required: false
+#         default: false
+#         type: boolean
+#       enable_automation:
+#         description: 'Include Automation Consumer images'
+#         required: false
+#         default: false
+#         type: boolean
+
+# env:
+#   PLANE_VERSION: ${{ github.event.inputs.plane_version }}
+#   EDITION: ${{ github.event.inputs.edition }}
+
+# jobs:
+#   download-and-release:
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: write
+#     steps:
+#       # ============================================
+#       # 1. 环境准备
+#       # ============================================
+#       - name: Checkout repository
+#         uses: actions/checkout@v4
+
+#       - name: Set up Docker
+#         uses: docker/setup-buildx-action@v3
+
+#       - name: Install Helm
+#         uses: azure/setup-helm@v3
+
+#       # ============================================
+#       # 2. 下载 Helm Chart
+#       # ============================================
+#       - name: Download Helm Chart
+#         run: |
+#           mkdir -p ./charts
+          
+#           if [ "${{ env.EDITION }}" = "enterprise" ]; then
+#             helm repo add plane https://helm.plane.so/
+#             helm repo update
+#             helm pull plane/plane-enterprise --version ${{ env.PLANE_VERSION }} --destination ./charts/
+#             CHART_FILE=$(ls ./charts/plane-enterprise-*.tgz)
+#           else
+#             helm repo add makeplane https://helm.plane.so/
+#             helm repo update
+#             helm pull makeplane/plane-ce --version ${{ env.PLANE_VERSION }} --destination ./charts/
+#             CHART_FILE=$(ls ./charts/plane-ce-*.tgz)
+#           fi
+          
+#           echo "CHART_FILE=$CHART_FILE" >> $GITHUB_ENV
+#           echo "Downloaded chart: $CHART_FILE"
+
+#       # ============================================
+#       # 3. 定义镜像列表并下载
+#       # ============================================
+#       - name: Define image list
+#         run: |
+#           mkdir -p ./images
+          
+#           # 基础依赖镜像 (始终包含)
+#           IMAGES=(
+#             "postgres:15.7-alpine"
+#             "valkey/valkey:7.2.11-alpine"
+#             "rabbitmq:3.13.6-management-alpine"
+#             "minio/minio:latest"
+#             "minio/mc:latest"
+#           )
+          
+#           # Plane 核心应用镜像
+#           if [ "${{ env.EDITION }}" = "enterprise" ]; then
+#             IMAGES+=(
+#               "makeplane/web-commercial:${{ env.PLANE_VERSION }}"
+#               "makeplane/space-commercial:${{ env.PLANE_VERSION }}"
+#               "makeplane/admin-commercial:${{ env.PLANE_VERSION }}"
+#               "makeplane/backend-commercial:${{ env.PLANE_VERSION }}"
+#               "makeplane/live-commercial:${{ env.PLANE_VERSION }}"
+#               "makeplane/monitor-commercial:${{ env.PLANE_VERSION }}"
+#               "makeplane/silo-commercial:${{ env.PLANE_VERSION }}"
+#             )
+#           else
+#             IMAGES+=(
+#               "makeplane/plane-frontend:${{ env.PLANE_VERSION }}"
+#               "makeplane/plane-space:${{ env.PLANE_VERSION }}"
+#               "makeplane/plane-admin:${{ env.PLANE_VERSION }}"
+#               "makeplane/plane-backend:${{ env.PLANE_VERSION }}"
+#               "makeplane/plane-live:${{ env.PLANE_VERSION }}"
+#             )
+#           fi
+          
+#           # 可选: OpenSearch
+#           if [ "${{ github.event.inputs.enable_opensearch }}" = "true" ]; then
+#             IMAGES+=("opensearchproject/opensearch:3.3.2")
+#           fi
+          
+#           # 可选: Plane AI
+#           if [ "${{ github.event.inputs.enable_ai }}" = "true" ]; then
+#             IMAGES+=("makeplane/plane-pi-commercial:${{ env.PLANE_VERSION }}")
+#           fi
+          
+#           # 可选: Email Service
+#           if [ "${{ github.event.inputs.enable_email }}" = "true" ]; then
+#             IMAGES+=("makeplane/email-commercial:${{ env.PLANE_VERSION }}")
+#           fi
+          
+#           # 可选: Iframely
+#           if [ "${{ github.event.inputs.enable_iframely }}" = "true" ]; then
+#             IMAGES+=("makeplane/iframely:v1.2.0")
+#           fi
+          
+#           # 可选: Outbox Poller (使用 backend 镜像)
+#           if [ "${{ github.event.inputs.enable_outbox }}" = "true" ]; then
+#             IMAGES+=("makeplane/backend-commercial:${{ env.PLANE_VERSION }}")
+#           fi
+          
+#           # 可选: Automation Consumer (使用 backend 镜像)
+#           if [ "${{ github.event.inputs.enable_automation }}" = "true" ]; then
+#             IMAGES+=("makeplane/backend-commercial:${{ env.PLANE_VERSION }}")
+#           fi
+          
+#           # 去重
+#           IMAGES=($(echo "${IMAGES[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
+          
+#           echo "IMAGES=${IMAGES[*]}" >> $GITHUB_ENV
+          
+#           # 保存镜像列表到文件
+#           printf "%s\n" "${IMAGES[@]}" > ./images/image-list.txt
+#           echo "Total images to download: ${#IMAGES[@]}"
+
+#       - name: Pull and save Docker images
+#         run: |
+#           IMAGES="${{ env.IMAGES }}"
+          
+#           for img in $IMAGES; do
+#             echo "=========================================="
+#             echo "Processing: $img"
+#             echo "=========================================="
             
-            ### 版本信息
-            - **Plane 版本**: ${{ env.PLANE_VERSION }}
-            - **版本类型**: ${{ env.EDITION }}
-            - **构建时间**: ${{ github.event.repository.updated_at }}
+#             # 提取镜像名称用于文件名
+#             filename=$(echo "$img" | tr '/:' '_').tar
+#             safe_name=$(echo "$img" | sed 's/[^a-zA-Z0-9._-]/_/g').tar
             
-            ### 包含内容
-            1. **Helm Chart**: `plane-${{ env.EDITION }}` chart 包
-            2. **Docker 镜像**: 所有需要的镜像 tar 包 (已打包为 `plane-images.tar.gz`)
-            3. **安装脚本**: `load-images.sh` - 用于导入镜像到私有仓库
-            4. **配置模板**: `values-template.yaml` - 内网部署配置模板
-            5. **安装指南**: `INSTALL.md` - 详细安装步骤
+#             # 使用 skopeo 直接复制为 OCI 格式 (更稳定)
+#             skopeo copy "docker://$img" "docker-archive:./images/$safe_name" || {
+#               echo "Skopeo failed for $img, trying docker pull..."
+#               docker pull "$img"
+#               docker save "$img" -o "./images/$safe_name"
+#             }
             
-            ### 可选组件
-            | 组件 | 是否包含 |
-            |------|---------|
-            | OpenSearch | ${{ github.event.inputs.enable_opensearch }} |
-            | Plane AI | ${{ github.event.inputs.enable_ai }} |
-            | Email Service | ${{ github.event.inputs.enable_email }} |
-            | Iframely | ${{ github.event.inputs.enable_iframely }} |
-            | Outbox Poller | ${{ github.event.inputs.enable_outbox }} |
-            | Automation Consumer | ${{ github.event.inputs.enable_automation }} |
+#             echo "Saved: $img -> ./images/$safe_name"
+#           done
+          
+#           # 生成镜像清单
+#           ls -lh ./images/*.tar > ./images/manifest.txt
+
+#       # ============================================
+#       # 4. 打包所有资源
+#       # ============================================
+#       - name: Package resources
+#         run: |
+#           # 创建资源包
+#           mkdir -p ./release
+          
+#           # 打包 Chart
+#           cp ${{ env.CHART_FILE }} ./release/
+          
+#           # 打包镜像 (分卷压缩，每个不超过 2GB)
+#           cd ./images
+#           tar -cf ../release/plane-images.tar --exclude='*.txt' *.tar
+#           # 分卷压缩（每卷 2GB）
+#           cd ../release
+#           split -b 2000m plane-images.tar plane-images.tar.part-
+          
+#           # 删除未分卷的大文件
+#           rm plane-images.tar
+#           cd ../images
+#           cp image-list.txt ../release/
+#           cp manifest.txt ../release/
+#           cd ..
+          
+#           # 创建安装脚本
+#           cat > ./release/load-images.sh << 'EOF'
+#           #!/bin/bash
+#           # Plane 内网镜像导入脚本
+#           # 用法: ./load-images.sh <registry-url> [namespace]
+          
+#           REGISTRY=${1:-"localhost:5000"}
+#           NAMESPACE=${2:-"plane"}
+          
+#           echo "=========================================="
+#           echo "Loading Plane images to registry: $REGISTRY"
+#           echo "=========================================="
+          
+#           for tarfile in *.tar; do
+#             [ -e "$tarfile" ] || continue
+#             echo "Loading: $tarfile"
+#             docker load -i "$tarfile"
             
-            ### 快速开始
-            1. 下载所有附件
-            2. 参考 `INSTALL.md` 进行安装
-            3. 使用 `load-images.sh` 导入镜像到私有仓库
-          files: |
-            ./release/*
-          generate_release_notes: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#             # 获取加载的镜像名
+#             img=$(docker load -i "$tarfile" | grep "Loaded image" | sed 's/Loaded image: //')
+            
+#             if [ -n "$img" ]; then
+#               # 重新打标签并推送到私有仓库
+#               new_img="$REGISTRY/$NAMESPACE/$(echo $img | cut -d'/' -f2-)"
+#               docker tag "$img" "$new_img"
+#               docker push "$new_img"
+#               echo "Pushed: $new_img"
+#             fi
+#           done
+          
+#           echo "All images loaded successfully!"
+#           EOF
+          
+#           chmod +x ./release/load-images.sh
+          
+#           # 创建 values.yaml 模板
+#           cat > ./release/values-template.yaml << 'EOF'
+#           # Plane 内网部署 values.yaml 模板
+#           # 请根据实际环境修改以下配置
+          
+#           planeVersion: ${PLANE_VERSION}
+          
+#           # 域名配置
+#           license:
+#             licenseDomain: plane.your-domain.com
+#             licenseServer: https://prime.plane.so
+          
+#           # 使用私有仓库
+#           dockerRegistry:
+#             enabled: true
+#             registry: your-private-registry.com
+#             loginid: your-username
+#             password: your-password
+          
+#           # 存储配置
+#           env:
+#             storageClass: longhorn  # 修改为你的 StorageClass
+          
+#           # Ingress 配置
+#           ingress:
+#             enabled: true
+#             ingressClass: nginx
+          
+#           # 数据库配置 (内网建议使用本地部署)
+#           services:
+#             postgres:
+#               local_setup: true
+#               image: your-private-registry.com/plane/postgres:15.7-alpine
+#               volumeSize: 5Gi
+          
+#             redis:
+#               local_setup: true
+#               image: your-private-registry.com/plane/valkey:7.2.11-alpine
+#               volumeSize: 1Gi
+          
+#             rabbitmq:
+#               local_setup: true
+#               image: your-private-registry.com/plane/rabbitmq:3.13.6-management-alpine
+#               volumeSize: 100Mi
+          
+#             minio:
+#               local_setup: true
+#               image: your-private-registry.com/plane/minio:latest
+#               image_mc: your-private-registry.com/plane/mc:latest
+#               volumeSize: 5Gi
+          
+#             opensearch:
+#               local_setup: false  # 如需启用改为 true
+#               # image: your-private-registry.com/plane/opensearch:3.3.2
+          
+#           # 应用镜像 (指向私有仓库)
+#             web:
+#               image: your-private-registry.com/plane/web-commercial:${PLANE_VERSION}
+#             space:
+#               image: your-private-registry.com/plane/space-commercial:${PLANE_VERSION}
+#             admin:
+#               image: your-private-registry.com/plane/admin-commercial:${PLANE_VERSION}
+#             api:
+#               image: your-private-registry.com/plane/backend-commercial:${PLANE_VERSION}
+#             live:
+#               image: your-private-registry.com/plane/live-commercial:${PLANE_VERSION}
+#             monitor:
+#               image: your-private-registry.com/plane/monitor-commercial:${PLANE_VERSION}
+#             silo:
+#               image: your-private-registry.com/plane/silo-commercial:${PLANE_VERSION}
+          
+#           # 如需启用 AI
+#           # pi:
+#           #   enabled: true
+#           #   image: your-private-registry.com/plane/plane-pi-commercial:${PLANE_VERSION}
+#           EOF
+          
+#           # 创建安装指南
+#           cat > ./release/INSTALL.md << EOF
+#           # Plane 内网安装指南
+          
+#           ## 版本信息
+#           - Plane 版本: ${PLANE_VERSION}
+#           - 版本类型: ${EDITION}
+#           - 打包时间: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+#           ## 资源清单
+#           $(cat ./release/image-list.txt)
+          
+#           ## 安装步骤
+          
+#           ### 1. 导入镜像到私有仓库
+#           \`\`\`bash
+#           # 解压镜像包
+#           tar -xzf plane-images.tar.gz
+          
+#           # 编辑 load-images.sh 修改 REGISTRY 地址
+#           # 然后执行
+#           ./load-images.sh your-registry.com plane
+#           \`\`\`
+          
+#           ### 2. 配置 values.yaml
+#           \`\`\`bash
+#           cp values-template.yaml values.yaml
+#           # 编辑 values.yaml，修改域名、仓库地址、密码等
+#           \`\`\`
+          
+#           ### 3. 安装 Plane
+#           \`\`\`bash
+#           # 添加本地 chart 仓库 (或直接使用 tgz 文件)
+#           helm install plane-app ./plane-${EDITION}-*.tgz \\
+#             --create-namespace \\
+#             --namespace plane \\
+#             -f values.yaml \\
+#             --timeout 10m \\
+#             --wait \\
+#             --wait-for-jobs
+#           \`\`\`
+          
+#           ### 4. 验证
+#           \`\`\`bash
+#           kubectl get pods -n plane
+#           \`\`\`
+#           EOF
+          
+#           ls -lh ./release/
+
+#       # ============================================
+#       # 5. 创建 GitHub Release 并上传资源
+#       # ============================================
+#       - name: Create GitHub Release
+#         uses: softprops/action-gh-release@v2.1.0
+#         with:
+#           tag_name: plane-${{ env.PLANE_VERSION }}-${{ env.EDITION }}-${{ github.run_number }}
+#           name: "Plane ${{ env.PLANE_VERSION }} (${{ env.EDITION }}) - Air-gapped Package"
+#           body: |
+#             ## Plane 内网安装资源包
+            
+#             ### 版本信息
+#             - **Plane 版本**: ${{ env.PLANE_VERSION }}
+#             - **版本类型**: ${{ env.EDITION }}
+#             - **构建时间**: ${{ github.event.repository.updated_at }}
+            
+#             ### 包含内容
+#             1. **Helm Chart**: `plane-${{ env.EDITION }}` chart 包
+#             2. **Docker 镜像**: 所有需要的镜像 tar 包 (已打包为 `plane-images.tar.gz`)
+#             3. **安装脚本**: `load-images.sh` - 用于导入镜像到私有仓库
+#             4. **配置模板**: `values-template.yaml` - 内网部署配置模板
+#             5. **安装指南**: `INSTALL.md` - 详细安装步骤
+            
+#             ### 可选组件
+#             | 组件 | 是否包含 |
+#             |------|---------|
+#             | OpenSearch | ${{ github.event.inputs.enable_opensearch }} |
+#             | Plane AI | ${{ github.event.inputs.enable_ai }} |
+#             | Email Service | ${{ github.event.inputs.enable_email }} |
+#             | Iframely | ${{ github.event.inputs.enable_iframely }} |
+#             | Outbox Poller | ${{ github.event.inputs.enable_outbox }} |
+#             | Automation Consumer | ${{ github.event.inputs.enable_automation }} |
+            
+#             ### 快速开始
+#             1. 下载所有附件
+#             2. 参考 `INSTALL.md` 进行安装
+#             3. 使用 `load-images.sh` 导入镜像到私有仓库
+#           files: |
+#             ./release/*
+#           generate_release_notes: false
+#         env:
+#           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
