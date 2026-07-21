@@ -1,17 +1,29 @@
-name: Package Plane Enterprise Air-Gapped Assets
+name: Package Plane for Air-Gapped Deployment
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 允许手动触发
     inputs:
-      plane_version:
-        description: 'Plane Enterprise Version'
+      plane_chart_version:
+        description: 'Plane Enterprise Helm Chart Version (e.g., 3.0.0)'
         required: true
-        default: 'v3.0.0'
+        default: '3.0.0'
+        type: string
+      plane_app_version:
+        description: 'Plane Application Version (Optional, will try to detect from chart)'
+        required: false
+        type: string
+      custom_dockerfile_enabled:
+        description: 'Enable building a custom Plane image (e.g., with extra Python libraries)'
+        required: false
+        default: false
+        type: boolean
+      # 你可以在此添加更多参数，如镜像仓库地址、目标标签等
 
 jobs:
   build-and-package:
     runs-on: ubuntu-latest
 
+    # 步骤 1: 设置必要的工具
     steps:
       - name: Setup Kubernetes Tools
         uses: yokawasa/action-setup-kube-tools@v0.14.0
@@ -22,89 +34,69 @@ jobs:
           helm: "latest"
           yq: "latest"
 
-      # ========== 步骤 1：准备 Helm 仓库与依赖 ==========
-      - name: Setup Helm Repositories
+      # 步骤 2: 提取 Plane 版本号
+      - name: Extract Plane Version
+        id: plane_vars
         run: |
+          # 使用你指定的 Chart 版本或默认值
+          CHART_VERSION="${{ inputs.plane_chart_version }}"
+          
+          # 添加 Plane Helm 仓库并更新
           helm repo add plane https://helm.plane.so/
-          helm repo add traefik https://traefik.github.io/charts
           helm repo update
-
-      # ========== 步骤 2：完整打包 Helm Chart (含依赖与 Air-gapped 配置) ==========
-      - name: Package Full Helm Chart
-        run: |
-          PLANE_VERSION="${{ github.event.inputs.plane_version }}"
-          echo "正在下载 Plane EE Chart (版本: $PLANE_VERSION)..."
           
-          # 下载源码并解压
-          helm pull plane/plane-enterprise --version "$PLANE_VERSION" --untar --untardir ./plane-chart-src
-          
-          CHART_DIR=$(find ./plane-chart-src -maxdepth 1 -type d | tail -n 1)
-          
-          echo "正在构建 Helm 子依赖包..."
-          helm dependency build "$CHART_DIR" || true
-
-          # 强制开启 airgapped.enabled 及基础离线配置
-          if [ -f "$CHART_DIR/values.yaml" ]; then
-            echo "正在开启 airgapped.enabled 配置..."
-            yq e '.airgapped.enabled = true' -i "$CHART_DIR/values.yaml"
-            yq e '.planeVersion = "'"$PLANE_VERSION"'"' -i "$CHART_DIR/values.yaml"
-            yq e '.ingress.enabled = true' -i "$CHART_DIR/values.yaml"
-            yq e '.ingress.ingressClass = "traefik"' -i "$CHART_DIR/values.yaml"
+          # 尝试从 Chart 中获取应用版本（如果未指定）
+          if [ -z "${{ inputs.plane_app_version }}" ]; then
+            echo "尝试从 Helm Chart 自动检测应用版本..."
+            PLANE_APP_VERSION=$(helm show chart plane/plane-enterprise --version "$CHART_VERSION" | yq e '.appVersion' -)
+            
+            if [ -z "$PLANE_APP_VERSION" ] || [ "$PLANE_APP_VERSION" = "null" ]; then
+              echo "⚠️ 无法从 Chart 中自动检测到应用版本。请手动指定 'plane_app_version' 输入参数。"
+              exit 1
+            fi
+            echo "✅ 检测到的 Plane 应用版本为: $PLANE_APP_VERSION"
+          else
+            PLANE_APP_VERSION="${{ inputs.plane_app_version }}"
+            echo "✅ 使用指定的 Plane 应用版本为: $PLANE_APP_VERSION"
           fi
 
-          echo "正在打包离线 Helm 包..."
-          OUTPUT_NAME="plane-enterprise-helm-full.tar.gz"
-          tar -czf "$OUTPUT_NAME" -C "$CHART_DIR" .
+          echo "chart_version=$CHART_VERSION" >> $GITHUB_OUTPUT
+          echo "app_version=$PLANE_APP_VERSION" >> $GITHUB_OUTPUT
+          echo "target_image=makeplane/plane:$PLANE_APP_VERSION" >> $GITHUB_OUTPUT
 
-          echo "Helm 离线包大小: $(du -sh "$OUTPUT_NAME" | cut -f1)"
-
-      - name: Upload Helm Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: plane-enterprise-helm-full
-          path: plane-enterprise-helm-full.tar.gz
-          retention-days: 2
-
-      # ========== 步骤 3：提取所有离线镜像列表 (包含 Airgapped 特有镜像) ==========
-      - name: Extract All Required Images
+      # 步骤 3: 提取镜像列表并替换
+      - name: Extract and Process Images List
         id: list_images
         run: |
-          PLANE_VERSION="${{ github.event.inputs.plane_version }}"
+          CHART_VERSION="${{ steps.plane_vars.outputs.chart_version }}"
           
-          # 渲染 Plane 主服务的模板，显式带上 airgapped.enabled=true 提取镜像
-          helm template plane-app plane/plane-enterprise \
-            --version "$PLANE_VERSION" \
-            --set airgapped.enabled=true \
-            --set ingress.enabled=true \
-            --set ingress.ingressClass=traefik | \
+          # 从模板中提取镜像列表
+          helm template my-plane plane/plane-enterprise --version "$CHART_VERSION" | \
             yq e '.. | select(has("image")) | .image | select(. != null)' - | \
-            sort -u > raw_images.txt
-
-          # 补充提取 Traefik Ingress Controller 镜像
-          helm template traefik traefik/traefik | \
-            yq e '.. | select(has("image")) | .image | select(. != null)' - | \
-            sort -u >> raw_images.txt
-
-          # 格式化与去重
-          sed -i '/---/d' raw_images.txt
-          sed -i '/^\s*$/d' raw_images.txt
-          sort -u raw_images.txt > images.txt
-
+            sort -u > images.txt
+          
+          # 清理列表中的空行和分隔符
+          sed -i '/---/d' images.txt
+          sed -i '/^\s*$/d' images.txt
+          
+          # 替换 Plane 主镜像为特定版本
+          sed -i "s|makeplane/plane:.*|makeplane/plane:${{ steps.plane_vars.outputs.app_version }}|g" images.txt
+          
           echo "========================================"
-          echo "           Plane 待拉取离线镜像列表"
+          echo "       待拉取和处理的镜像列表"
           echo "========================================"
           cat images.txt
           echo "========================================"
           echo "共计 $(wc -l < images.txt) 个镜像"
           echo "========================================"
 
-      # ========== 步骤 4：拉取并打包所有容器镜像 ==========
-      - name: Pull and Package All Images
+      # 步骤 4: 拉取所有官方镜像
+      - name: Pull All Official Images
         run: |
           mapfile -t IMAGES < images.txt
           
           if [ ${#IMAGES[@]} -eq 0 ]; then
-            echo "Error: 未在 Chart 模版中检测到任何镜像！"
+            echo "Error: 镜像列表为空！"
             exit 1
           fi
 
@@ -112,28 +104,152 @@ jobs:
           echo "正在拉取所有官方镜像 (共 ${#IMAGES[@]} 个)..."
           echo "=========================================="
           for img in "${IMAGES[@]}"; do
-            echo "正在下载镜像: $img ..."
+            echo "正在下载: $img ..."
             docker pull "$img"
           done
-          echo "所有镜像下载完毕。"
+          echo "✅ 所有官方镜像拉取完成。"
 
-          echo "=========================================="
-          echo "正在打包并压缩镜像文件..."
-          echo "=========================================="
-          OUTPUT_NAME="plane-enterprise-images.tar.gz"
+      # 步骤 5: (可选) 构建定制镜像
+      # - name: Build Custom Plane Image
+      #   if: inputs.custom_dockerfile_enabled == true
+      #   run: |
+      #     TARGET_IMAGE="${{ steps.plane_vars.outputs.target_image }}"
           
+      #     echo "=========================================="
+      #     echo "正在基于本地官方镜像构建定制版本..."
+      #     echo "目标标签: $TARGET_IMAGE"
+      #     echo "========================================="
+
+      #     # 创建自定义 Dockerfile
+      #     cat > Dockerfile.plane-custom <<EOF
+      #     # 引用本地已存在的官方镜像
+      #     FROM ${TARGET_IMAGE}
+
+      #     # 切换到 root 用户以安装系统级依赖
+      #     USER root
+
+      #     # 在此处安装你所需的系统包或Python库
+      #     # 示例: 安装额外的数据库驱动
+      #     RUN apt-get update && \
+      #         apt-get install -y --no-install-recommends \
+      #             default-libmysqlclient-dev \
+      #             pkg-config \
+      #         && rm -rf /var/lib/apt/lists/*
+
+      #     # 切换回 plane 用户 (Plane 容器默认用户)
+      #     USER plane
+
+      #     # 安装额外的 Python 依赖
+      #     RUN pip install --no-cache-dir \
+      #         psycopg2-binary \
+      #         mysqlclient
+      #     EOF
+
+      #     # 构建并覆盖标签
+      #     docker build -f Dockerfile.plane-custom -t "$TARGET_IMAGE" .
+          
+      #     echo "✅ 定制镜像构建完成，已覆盖原镜像标签: $TARGET_IMAGE"
+
+      # 步骤 6: 打包 Helm Chart
+      - name: Package Full Helm Chart
+        run: |
+          CHART_VERSION="${{ steps.plane_vars.outputs.chart_version }}"
+          
+          echo "正在拉取 Chart 源码..."
+          helm pull plane/plane-enterprise --version "$CHART_VERSION" --untar --untardir ./plane-chart-src
+          
+          CHART_DIR=$(find ./plane-chart-src -maxdepth 1 -type d | tail -n 1)
+          echo "Chart 目录: $CHART_DIR"
+
+          # 构建依赖
+          echo "正在构建 Helm Chart 依赖..."
+          helm dependency build "$CHART_DIR"
+
+          # (可选) 修改 values.yaml 中的镜像地址为你私有仓库的地址
+          # if [ -f "$CHART_DIR/values.yaml" ]; then
+          #   # 这里只是一个示例，请根据你的私有仓库实际情况修改
+          #   yq e '.image.repository = "your-private-registry.com/makeplane/plane"' -i "$CHART_DIR/values.yaml"
+          #   # 标签通常保持不变或由你指定
+          # fi
+
+          echo "正在打包完整的 Helm Chart..."
+          OUTPUT_NAME="plane-helm-full.tar.gz"
+          tar -czf "$OUTPUT_NAME" -C "$CHART_DIR" .
+
+          echo "========================================"
+          echo "  Helm 完整包大小: $(du -sh "$OUTPUT_NAME" | cut -f1)"
+          echo "========================================"
+
+      - name: Upload Helm Artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: plane-helm-full
+          path: plane-helm-full.tar.gz
+          retention-days: 1
+
+      # 步骤 7: 保存所有镜像 (包含已修改的)
+      - name: Save All Images
+        run: |
+          mapfile -t IMAGES < images.txt
+          
+          echo "=========================================="
+          echo "正在保存所有镜像 (含定制版 Plane)..."
+          echo "=========================================="
+          OUTPUT_NAME="plane-images.tar.gz"
+          
+          # 这里的 makeplane/plane:<version> 可能已经是构建后的定制版了
           docker save "${IMAGES[@]}" | gzip > "$OUTPUT_NAME"
 
-          echo "打包完成！文件大小："
+          echo "=========================================="
+          echo "✅ 打包成功！最终大小："
           du -sh "$OUTPUT_NAME"
+          echo "========================================"
 
-      # ========== 步骤 5：上传镜像 Artifact ==========
       - name: Upload Images Artifact
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: plane-enterprise-offline-images
-          path: plane-enterprise-images.tar.gz
-          retention-days: 2
+          name: plane-offline-images
+          path: plane-images.tar.gz
+          retention-days: 1
+
+      # 步骤 8: (可选) 生成用于部署的 values.yaml 片段
+      - name: Generate Air-Gapped values.yaml Snippet
+        run: |
+          cat > airgapped-values-snippet.yaml <<EOF
+          # 将此片段添加到你的 values.yaml 中
+          # 启用 air-gapped 模式
+          airgapped:
+            enabled: true
+            # 如果你的私有仓库使用自签名证书，需要指定 CA 证书的 Secret
+            # s3Secrets:
+            #   - name: my-registry-ca-secret
+            #     key: ca.crt
+
+          # 确保使用你的私有镜像仓库地址
+          # image:
+          #   repository: your-private-registry.com/makeplane/plane
+          #   tag: "${{ steps.plane_vars.outputs.app_version }}"
+          #   pullPolicy: IfNotPresent
+
+          # 如果使用外部数据库和缓存，请相应配置
+          # services:
+          #   postgres:
+          #     local_setup: false
+          #   redis:
+          #     local_setup: false
+          #   rabbitmq:
+          #     local_setup: false
+          EOF
+          
+          echo "✅ 已生成 air-gapped values.yaml 片段。"
+
+      - name: Upload values Snippet Artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: plane-airgapped-values-snippet
+          path: airgapped-values-snippet.yaml
+          retention-days: 1
+
 # name: Download Plane Resources for Air-gapped Install
 
 # on:
