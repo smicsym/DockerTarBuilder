@@ -213,6 +213,7 @@ jobs:
           
           # 删除未分卷的大文件
           rm plane-images.tar
+          cd ../images
           cp image-list.txt ../release/
           cp manifest.txt ../release/
           cd ..
