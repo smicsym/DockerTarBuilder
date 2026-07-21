@@ -77,11 +77,8 @@ jobs:
           sed -i '/---/d' images.txt
           sed -i '/^\s*$/d' images.txt
           
-          # 替换 Plane CE 镜像为特定版本
-          sed -i "s|makeplane/plane-web:.*|makeplane/plane-web:${{ steps.plane_ce_vars.outputs.app_version }}|g" images.txt
-          sed -i "s|makeplane/plane-backend:.*|makeplane/plane-backend:${{ steps.plane_ce_vars.outputs.app_version }}|g" images.txt
-          sed -i "s|makeplane/plane-worker:.*|makeplane/plane-worker:${{ steps.plane_ce_vars.outputs.app_version }}|g" images.txt
-          sed -i "s|makeplane/plane-admin:.*|makeplane/plane-admin:${{ steps.plane_ce_vars.outputs.app_version }}|g" images.txt
+          # 3. 直接把 artifacts.plane.so/makeplane/ 替换为 makeplane/
+          sed -i 's|artifacts.plane.so/makeplane/|makeplane/|g' images.txt
           
           echo "========================================"
           echo "       待拉取和处理的镜像列表"
